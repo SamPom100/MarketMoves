@@ -22,6 +22,9 @@ class Stock(Ticker):
             self.option_chain_cache[date] = super().option_chain(date)
             return self.option_chain_cache[date].puts
 
+    def __get_midprice(self, option_chain):
+        return (option_chain["ask"] + option_chain["bid"]) / 2
+
     def get_current_price(self):
         return super().info['regularMarketPrice']
 
@@ -33,7 +36,7 @@ class Stock(Ticker):
         closest_call = calls[calls["strike"] >= price].iloc[0]
         closest_put = puts[puts["strike"] <= price].iloc[-1]
         
-        return (closest_call["ask"], closest_put["ask"])
+        return (self.__get_midprice(closest_call), self.__get_midprice(closest_put))
 
     def __get_otm_strangle(self, date: str):
         calls = self.get_calls(date)
@@ -43,7 +46,7 @@ class Stock(Ticker):
         otm_call = calls[calls["strike"] > price].iloc[0]
         otm_put = puts[puts["strike"] < price].iloc[-1]
         
-        return (otm_call["ask"], otm_put["ask"])
+        return (self.__get_midprice(otm_call), self.__get_midprice(otm_put))
 
     def __get_expected_move_straddle(self, date: str = None):
         if date == None:

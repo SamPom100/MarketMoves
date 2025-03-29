@@ -55,3 +55,15 @@ MSFT Implied Moves
 2027-06-17: 28.87%
 2027-12-17: 32.27%
 ```
+### Butterfly Spreads
+[source](https://reasonabledeviations.com/2020/10/01/option-implied-pdfs/)
+[source1](https://reasonabledeviations.com/2020/10/10/option-implied-pdfs-2/)
+
+### Setting up venv
+`python -m venv .venv`
+
+`source .venv/bin/activate`
+
+`pip install -r requirements.txt`
+
+`deactivate`
