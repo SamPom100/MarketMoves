@@ -1,29 +1,40 @@
 from yfinance.ticker import Ticker
+from matplotlib import pyplot as plt
+from scipy.ndimage import gaussian_filter1d
+import pandas as pd
+
+class FilteredOptionChain:
+    def __init__(self, option_chain):
+        option_chain.calls["midprice"] = (option_chain.calls["bid"] + option_chain.calls["ask"]) / 2
+        option_chain.puts["midprice"] = (option_chain.puts["bid"] + option_chain.puts["ask"]) / 2
+        self.calls = option_chain.calls[option_chain.calls["openInterest"] > 0]
+        self.calls = option_chain.calls[option_chain.calls["volume"] > 0]
+        self.puts = option_chain.puts[option_chain.puts["openInterest"] > 0]
+        self.calls = self.calls[self.calls["midprice"] > 0]
+        self.puts = self.puts[self.puts["midprice"] > 0]
+        self.puts = option_chain.puts[option_chain.puts["volume"] > 0]
 
 class Stock(Ticker):
     def __init__(self, symbol: str):
         super().__init__(symbol)
         self.option_chain_cache = {}
+        self.symbol = symbol
+
+    '''
+    CLASS METHODS
+    '''
 
     def get_option_dates(self):
         return super().options
 
     def get_calls(self, date: str):
-        if date in self.option_chain_cache:
-            return self.option_chain_cache[date].calls
-        else:
-            self.option_chain_cache[date] = super().option_chain(date)
-            return self.option_chain_cache[date].calls
+        return self.__get_option_chain(date).calls
 
     def get_puts(self, date: str):
-        if date in self.option_chain_cache:
-            return self.option_chain_cache[date].puts
-        else:
-            self.option_chain_cache[date] = super().option_chain(date)
-            return self.option_chain_cache[date].puts
+        return self.__get_option_chain(date).puts
         
     def get_current_price(self):
-        return super().info['regularMarketPrice']
+        return super().info["regularMarketPrice"]
     
     def get_expected_moves_straddle(self):
         return {date: self.__get_expected_move_straddle(date) for date in self.get_option_dates()}
@@ -35,20 +46,24 @@ class Stock(Ticker):
         straddle = self.get_expected_moves_straddle()
         strangle = self.get_expected_moves_strangle()
         return {date: round((straddle[date] + strangle[date]) / 2, 2) for date in strangle}
-    
-    def get_butterfly_all(self, date: str):
-        calls = self.get_calls(date)
-        strikes = calls["strike"].tolist()
-        butterflies = {}
-        for i in range(1, len(strikes) - 1, 1):
-            try:
-                butterflies[strikes[i]] = self.__get_butterfly(date, strikes[i - 1], strikes[i], strikes[i + 1])
-            except ValueError:
-                butterflies[strikes[i]] = None
-        return butterflies
-    
-    def __get_midprice(self, option_chain):
-        return round(float((option_chain["ask"] + option_chain["bid"]) / 2), 2)
+
+    def calculate_butterfly_probabilities(self, date: str):
+        return self.__calculate_butterfly_probabilities_helper(date)
+
+    def plot_butterfly_probabilities(self, date: str):
+        self.__plot_butterfly_probabilities_helper(date)
+
+    '''
+    HELPER METHODS
+    '''
+
+    def __get_option_chain(self, date: str):
+        if date in self.option_chain_cache:
+            return self.option_chain_cache[date]
+        else:
+            option_chain = super().option_chain(date)
+            self.option_chain_cache[date] = FilteredOptionChain(option_chain)
+            return self.option_chain_cache[date]
 
     def __get_atm_straddle(self, date: str):
         calls = self.get_calls(date)
@@ -58,7 +73,7 @@ class Stock(Ticker):
         closest_call = calls[calls["strike"] >= price].iloc[0]
         closest_put = puts[puts["strike"] <= price].iloc[-1]
         
-        return (self.__get_midprice(closest_call), self.__get_midprice(closest_put))
+        return (closest_call["midprice"], closest_put["midprice"])
 
     def __get_otm_strangle(self, date: str):
         calls = self.get_calls(date)
@@ -68,7 +83,7 @@ class Stock(Ticker):
         otm_call = calls[calls["strike"] > price].iloc[0]
         otm_put = puts[puts["strike"] < price].iloc[-1]
         
-        return (self.__get_midprice(otm_call), self.__get_midprice(otm_put))
+        return (otm_call["midprice"], otm_put["midprice"])
 
     def __get_expected_move_straddle(self, date: str):
         call_price, put_price = self.__get_atm_straddle(date)
@@ -87,30 +102,83 @@ class Stock(Ticker):
         
         return round(100 * ((straddle_value + strangle_value) / 2) / price, 2)
 
-    def __get_butterfly(self, date: str, strike1, strike2, strike3):
-        calls = self.get_calls(date)
-        strikes = calls["strike"].tolist()
-
-        if not (strike1 in strikes and strike2 in strikes and strike3 in strikes):
-            print("Strikes: \n" + str(strikes))
-            raise ValueError("Strikes must be in the option chain")
-        strike1_index = strikes.index(strike1)
-        strike2_index = strikes.index(strike2)
-        strike3_index = strikes.index(strike3)
-        if not (strike1_index + 1 == strike2_index and strike2_index + 1 == strike3_index):
-            print("Strikes: \n" + str(strikes))
-            raise ValueError("Strikes must be next to each other")
-        if not (strike2 - strike1 == strike3 - strike2):
-            raise ValueError("Strike values must be equidistant")
-        if calls[calls["strike"] == strike1]["volume"].iloc[0] < 10:
-            raise ValueError(f"Strike {strike1} Volume must be at least 10")
-        if calls[calls["strike"] == strike2]["volume"].iloc[0] < 10:
-            raise ValueError(f"Strike {strike2} Volume must be at least 10")
-        if calls[calls["strike"] == strike3]["volume"].iloc[0] < 10:
-            raise ValueError(f"Strike {strike3} Volume must be at least 10")
+    def __get_butterflies_helper(self, option_chain):
+        results = {}
         
-        one_longcall = self.__get_midprice(calls[calls["strike"] == strike1].iloc[0])
-        two_shortcall = self.__get_midprice(calls[calls["strike"] == strike2].iloc[0])
-        second_longcall = self.__get_midprice(calls[calls["strike"] == strike3].iloc[0])
+        for i in range(1, len(option_chain) - 1, 1):
+            bottom_call = option_chain.iloc[i - 1]
+            middle_call = option_chain.iloc[i]
+            top_call = option_chain.iloc[i + 1]
 
-        return round((one_longcall - (2 * two_shortcall) + second_longcall), 2)
+            #ensure strike prices are equidistant
+            if not middle_call["strike"] - bottom_call["strike"] == top_call["strike"] - middle_call["strike"]:
+                continue
+
+            butterfly_price = (bottom_call["midprice"] - (2 * middle_call["midprice"])) + top_call["midprice"]
+            butterfly_maxprofit = middle_call["strike"] - bottom_call["strike"] 
+            butterfly_prob = butterfly_price / butterfly_maxprofit
+            if butterfly_prob > 0.5 or butterfly_prob < -0.5:
+                continue
+            
+            results[float(middle_call["strike"])] = round(float(butterfly_prob * 100), 3)
+        return pd.DataFrame(results.items(), columns=['strike', 'probability'])
+
+    def __calculate_butterfly_probabilities_helper(self, date: str):
+        calls = self.__get_butterflies_helper(self.get_calls(date))
+        puts = self.__get_butterflies_helper(self.get_puts(date))
+        results = pd.merge(calls, puts, on='strike', how='outer')
+
+        def helper(row):
+            if pd.isna(row['probability_x']):
+                return row['probability_y']
+            elif pd.isna(row['probability_y']):
+                return row['probability_x']
+            else:
+                return (row['probability_x'] + row['probability_y']) / 2
+        results['probability'] = results.apply(helper, axis=1)
+        results = results[['strike', 'probability']]
+        results['probability'] = results['probability'].abs()
+        return results
+    
+    def __normalize_data_gaussian(self, results):
+        results['probability'] = gaussian_filter1d(results['probability'], sigma=4)
+        return results
+    
+    def __normalize_data_idr(self, results):
+        Q1 = results['probability'].quantile(0.25)
+        Q3 = results['probability'].quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - 1.5 * IQR
+        upper_bound = Q3 + 1.5 * IQR
+        results = results[(results['probability'] >= lower_bound) & (results['probability'] <= upper_bound)]
+        return results
+    
+    def __normalize_data_combined(self, results):
+        results = self.__normalize_data_idr(results)
+        results = self.__normalize_data_gaussian(results)
+        return results
+
+    def __plot_butterfly_probabilities_helper(self, date: str):
+        results = self.__calculate_butterfly_probabilities_helper(date)
+
+        # TODO - find a better smoothing method
+        results = self.__normalize_data_combined(results)
+
+        plt.figure(figsize=(12, 6))
+        plt.scatter(results['strike'], results['probability'], s=50, alpha=0.7)
+
+        current_price = self.get_current_price()
+        plt.axvline(x=current_price, color='green', linestyle='--', alpha=0.5, 
+                    label=f'Current Price: ${current_price:.2f}')
+
+        plt.xlabel('Strike Price ($)')
+        plt.ylabel('Probability (%)')
+        plt.title(f'Butterfly-Implied Probability Distribution for {self.symbol} - {date}')
+        plt.plot(results['strike'], results['probability'], 'k--', alpha=0.3)
+        plt.axhline(y=0, color='r', linestyle='-', alpha=0.3)
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
+        return results
