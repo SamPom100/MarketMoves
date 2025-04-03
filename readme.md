@@ -1,4 +1,4 @@
-# AutoHedge
+# MarketMoves
 
 ## Description
 
@@ -8,9 +8,11 @@ or decrease from its current price, based on the current level of
 implied volatility.
 ```
 
-This project calculates the expected move of a given ticker and 
-recommends options positions to hedge against potential downside.
+This project calculates the expected move of a given ticker
 
+TODO: recommend options positions to hedge against potential downside.
+
+## Method 1: Straddles & Strangles
 #### Sources
 [source](https://www.tastylive.com/definitions/calculating-expected-move)
 
@@ -55,9 +57,35 @@ MSFT Implied Moves
 2027-06-17: 28.87%
 2027-12-17: 32.27%
 ```
-### Butterfly Spreads
+
+## Method 2: Butterfly Kaleidoscope
+### Source
 [source](https://reasonabledeviations.com/2020/10/01/option-implied-pdfs/)
 [source1](https://reasonabledeviations.com/2020/10/10/option-implied-pdfs-2/)
+
+## TSLA
+![TSLA](https://github.com/user-attachments/assets/86a02904-115e-4f02-b27c-23e2571a41e1)
+
+
+
+## SPY
+![SPY](https://github.com/user-attachments/assets/4bbe2d9b-3d47-4a87-9eaa-bd50a8e967f4)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ### Setting up venv
 `python -m venv .venv`
